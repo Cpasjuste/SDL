@@ -35,13 +35,14 @@ typedef struct SWITCHJoystickState
 {
     PadState pad;
     HidAnalogStickState sticks_old[2];
+    HidNpadStyleTag style_old;
     HidVibrationDeviceHandle vibrationDeviceHandles;
     HidVibrationValue vibrationValues;
 } SWITCHJoystickState;
 
 static SWITCHJoystickState state[JOYSTICK_COUNT];
 
-static const HidNpadButton pad_mapping[] = {
+static HidNpadButton pad_mapping[] = {
     HidNpadButton_A, HidNpadButton_B, HidNpadButton_X, HidNpadButton_Y,
     HidNpadButton_StickL, HidNpadButton_StickR,
     HidNpadButton_L, HidNpadButton_R,
@@ -51,6 +52,18 @@ static const HidNpadButton pad_mapping[] = {
     HidNpadButton_StickLLeft, HidNpadButton_StickLUp, HidNpadButton_StickLRight, HidNpadButton_StickLDown,
     HidNpadButton_StickRLeft, HidNpadButton_StickRUp, HidNpadButton_StickRRight, HidNpadButton_StickRDown,
     HidNpadButton_LeftSL, HidNpadButton_LeftSR, HidNpadButton_RightSL, HidNpadButton_RightSR
+};
+
+static HidNpadButton pad_mapping_left[] = {
+        HidNpadButton_Left, HidNpadButton_Up, HidNpadButton_Right, HidNpadButton_Down,
+        HidNpadButton_StickL, HidNpadButton_StickR,
+        HidNpadButton_L, HidNpadButton_R,
+        HidNpadButton_ZL, HidNpadButton_ZR,
+        HidNpadButton_Plus, HidNpadButton_Minus,
+        HidNpadButton_A, HidNpadButton_B, HidNpadButton_X, HidNpadButton_Y,
+        HidNpadButton_StickLLeft, HidNpadButton_StickLUp, HidNpadButton_StickLRight, HidNpadButton_StickLDown,
+        HidNpadButton_StickRLeft, HidNpadButton_StickRUp, HidNpadButton_StickRRight, HidNpadButton_StickRDown,
+        HidNpadButton_LeftSL, HidNpadButton_LeftSR, HidNpadButton_RightSL, HidNpadButton_RightSR
 };
 
 /* Function to scan the system for joysticks.
@@ -64,11 +77,13 @@ SWITCH_JoystickInit(void)
     // initialize first pad to defaults
     padInitializeDefault(&state[0].pad);
     padUpdate(&state[0].pad);
+    state[0].style_old = padGetStyleSet(&state[0].pad);
 
     // initialize pad and vibrations for pad 1 to 7
     for (int i = 1; i < JOYSTICK_COUNT; i++) {
         padInitialize(&state[i].pad, HidNpadIdType_No1 + i);
         padUpdate(&state[i].pad);
+        state[i].style_old = padGetStyleSet(&state[i].pad);
         hidInitializeVibrationDevices(&state[i].vibrationDeviceHandles,1,
                                       HidNpadIdType_No1 + i, padGetStyleSet(&state[i].pad));
     }
@@ -189,12 +204,31 @@ static void
 SWITCH_JoystickUpdate(SDL_Joystick *joystick)
 {
     u64 diff;
+    HidNpadStyleTag style;
+    HidNpadButton *mapping;
+
     int index = (int) SDL_JoystickInstanceID(joystick);
     if (index > JOYSTICK_COUNT || SDL_IsTextInputActive()) {
         return;
     }
 
+    // update pads states
     padUpdate(&state[index].pad);
+    style = padGetStyleSet(&state[index].pad);
+    // handle style change
+    if(style != 0 && style != HidNpadStyleTag_NpadHandheld && style != state[index].style_old) {
+        HidLaControllerSupportResultInfo info;
+        HidLaControllerSupportArg arg = { .hdr.player_count_max = JOYSTICK_COUNT };
+        hidLaShowControllerSupportForSystem(&info, &arg, false);
+        // update new styles
+        for(int i=0; i<JOYSTICK_COUNT; i++) {
+            padUpdate(&state[i].pad);
+            state[i].style_old = state[i].pad.style_set;
+        }
+        mapping = pad_mapping_left;
+    } else {
+        //mapping = pad_mapping;
+    }
 
     // Axes (left)
     if (state[index].sticks_old[0].x != state[index].pad.sticks[0].x) {
@@ -221,9 +255,9 @@ SWITCH_JoystickUpdate(SDL_Joystick *joystick)
     diff = state[index].pad.buttons_old ^ state[index].pad.buttons_cur;
     if (diff) {
         for (int i = 0; i < joystick->nbuttons; i++) {
-            if (diff & pad_mapping[i]) {
+            if (diff & mapping[i]) {
                 SDL_PrivateJoystickButton(joystick, i,
-                                          state[index].pad.buttons_cur & pad_mapping[i] ?
+                                          state[index].pad.buttons_cur & mapping[i] ?
                                           SDL_PRESSED : SDL_RELEASED);
             }
         }
